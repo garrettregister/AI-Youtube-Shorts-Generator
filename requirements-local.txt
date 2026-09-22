@@ -3,8 +3,15 @@
 # Optional dependencies for --mode local.
 yt-dlp>=2024.1.1
 faster-whisper>=1.0.0
+whisperx>=3.1.1
 openai>=1.0.0
 google-genai>=1.0.0
 opencv-python>=4.8.0
 # torch is only needed if you want CUDA Whisper. CPU works without it.
 # torch>=2.0
+#
+# Burned-in word-synced captions (the "hype"/"clean"/"karaoke" styles) are
+# rendered by ffmpeg's `ass` filter, which requires an ffmpeg built with
+# --enable-libass. Most distro/box builds include it; if yours doesn't, clips
+# still render — just without captions (a warning is printed). whisperx adds
+# wav2vec2 word-level alignment on top of faster-whisper.

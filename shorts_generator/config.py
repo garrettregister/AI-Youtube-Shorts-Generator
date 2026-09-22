@@ -28,6 +28,17 @@ LOCAL_WHISPER_MODEL = os.getenv("LOCAL_WHISPER_MODEL", "base")
 LOCAL_WHISPER_DEVICE = os.getenv("LOCAL_WHISPER_DEVICE", "auto")  # auto / cpu / cuda
 LOCAL_OUTPUT_DIR = os.getenv("LOCAL_OUTPUT_DIR", "output")
 
+# Caption burn-in settings (local mode). Word-for-word captions are built as
+# an ASS subtitle and burned in with ffmpeg's `ass` filter (needs libass).
+LOCAL_CAPTION_STYLE = os.getenv("LOCAL_CAPTION_STYLE", "hype").strip().lower()  # hype / clean / karaoke
+_local_caption_words_env = os.getenv("LOCAL_CAPTION_WORDS_PER_GROUP", "4")
+try:
+    LOCAL_CAPTION_WORDS_PER_GROUP = int(_local_caption_words_env)
+except (TypeError, ValueError):
+    LOCAL_CAPTION_WORDS_PER_GROUP = 4
+LOCAL_CAPTION_FONT = os.getenv("LOCAL_CAPTION_FONT", "").strip()  # empty = Arial
+LOCAL_CAPTION_FONTSIZE = os.getenv("LOCAL_CAPTION_FONTSIZE", "").strip()  # empty = per-style default
+
 # VAD (Voice Activity Detection) settings for faster-whisper
 # Default threshold is 0.5; lower = more sensitive, higher = less sensitive
 # Default min_speech_duration_ms is 250ms; increase to avoid tiny false positives

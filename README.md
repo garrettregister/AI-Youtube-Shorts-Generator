@@ -44,7 +44,7 @@ Built for creators, agencies, and developers who don't want to pay $20–$300/mo
 - **🔀 Two Modes — API (fast) or Local (offline)**: Default `--mode api` uses MuAPI for download/transcription/cropping; `--mode local` runs entirely on your machine with `yt-dlp`, `faster-whisper`, and `ffmpeg`/`opencv`, and lets you pick OpenAI, Gemini, or any local OpenAI-compatible LLM (Ollama, llama.cpp, LM Studio, vLLM) for highlight ranking
 - **🤖 Virality-Aware Highlight Selection**: Clips ranked on hooks, emotional peaks, opinion bombs, revelation moments, conflict, quotable lines, story peaks, and practical value — not just generic "interesting"
 - **📈 Score + Hook + Reason for Every Clip**: Each highlight comes with a viral score, an opening hook line, and a one-sentence explanation of why it works
-- **🎤 Whisper Transcription, Your Choice**: Cloud (`/openai-whisper` via MuAPI) or local (`faster-whisper`, CPU or CUDA) — same downstream output shape
+- **🎤 Whisper Transcription, Your Choice**: Cloud (`/openai-whisper` via MuAPI) or local (`faster-whisper` + WhisperX word alignment, CPU or CUDA) — same downstream output shape
 - **🧩 Long-Video Aware**: Videos over 30 minutes are auto-chunked with overlap so nothing gets missed
 - **♻️ Smart Dedupe**: Overlapping highlights are collapsed by score so you never get two near-duplicate clips
 - **🎯 Smart Vertical Crop**: API mode uses MuAPI's auto-crop; local mode runs OpenCV face tracking with motion smoothing
@@ -112,6 +112,12 @@ Don't want to self-host? The [AI Clipping API](https://muapi.ai/playground/ai-cl
    LOCAL_WHISPER_MODEL=base          # tiny / base / small / medium / large-v3
    LOCAL_WHISPER_DEVICE=auto         # auto / cpu / cuda
    LOCAL_OUTPUT_DIR=output           # where local mp4s land
+
+   # Word-synced burned-in captions (local mode).
+   LOCAL_CAPTION_STYLE=hype          # hype | clean | karaoke
+   LOCAL_CAPTION_WORDS_PER_GROUP=4   # words per caption chunk
+   # LOCAL_CAPTION_FONT=Arial        # font family (default Arial)
+   # LOCAL_CAPTION_FONTSIZE=         # fixed px size (default: per-style)
    ```
 
    **Tip for a 100% local stack** (no OpenAI / Gemini / MuAPI keys): set `LLM_PROVIDER=openai-compatible`, point `LOCAL_LLM_BASE_URL` at your Ollama or `llama-server` instance, and pull a model with solid JSON output — see [Recommended local models](#recommended-local-models).
@@ -199,7 +205,16 @@ for short in result["shorts"]:
 
 Local transcription is cached as an `.srt` file in `LOCAL_OUTPUT_DIR` using the
 video's base name. If the cache already exists and is newer than the source
-file, the app reuses it instead of running Whisper again.
+file, the app reuses it instead of running Whisper again. A second cache,
+`<base>.words.json`, stores word-level timestamps (from WhisperX alignment) so
+word-synced captions don't require re-running the models; a fresh `.srt` from
+an older install is upgraded to word level once.
+
+By default, local-mode clips get **word-synced burned-in captions** (`hype`
+style) rendered by ffmpeg's `ass` filter. Pass `--no-captions` to skip them,
+or `--caption-style clean` / `--caption-style karaoke` for other looks. This
+needs ffmpeg with libass; without it, clips still render but without captions
+(a warning is printed).
 
 Local downloads are also cached in `LOCAL_OUTPUT_DIR` as
 `source_<youtube_id>.mp4` when the input is a YouTube URL. If that file already
@@ -222,6 +237,8 @@ xargs -a urls.txt -I{} python main.py "{}"
 | `--aspect-ratio` | source ratio | Any ratio; `9:16` for TikTok/Reels, `1:1` for square. Unset = keep the source video's own ratio (local mode; API mode requires an explicit ratio) |
 | `--format` | `720` | Source download resolution: `360` / `480` / `720` / `1080` |
 | `--language` | auto | Force Whisper language code (e.g. `en`) |
+| `--caption-style` | `hype` | Burned-in caption look, local mode only: `hype` (default) / `clean` / `karaoke` |
+| `--no-captions` | — | Skip burned-in word-synced captions (local mode only) |
 | `--output-json` | — | Dump the full result (transcript + all candidates) to a file |
 
 ### API mode vs Local mode
@@ -229,9 +246,10 @@ xargs -a urls.txt -I{} python main.py "{}"
 | Step | API mode (`--mode api`) | Local mode (`--mode local`) |
 |---|---|---|
 | Download | MuAPI `/youtube-download` | `yt-dlp` for remote URLs, direct file path for local inputs |
-| Transcription | MuAPI `/openai-whisper` | `faster-whisper` (CPU or CUDA) |
+| Transcription | MuAPI `/openai-whisper` | `faster-whisper` + WhisperX word alignment (CPU or CUDA) |
 | Highlight LLM | MuAPI `gpt-5-mini` | `LLM_PROVIDER=openai` uses OpenAI (`gpt-4o-mini`), `LLM_PROVIDER=gemini` uses Gemini (`gemini-2.5-flash`), `LLM_PROVIDER=openai-compatible` (alias `ollama`) uses any local OpenAI-style server (Ollama, llama.cpp, …) |
 | Vertical crop | MuAPI `/autocrop` | `ffmpeg` + OpenCV face tracking |
+| Captions | — | Word-for-word burned-in captions via WhisperX timestamps + ffmpeg `ass` filter (libass) |
 | Output | hosted URLs | local mp4 paths |
 | Required keys | `MUAPI_API_KEY` | `OPENAI_API_KEY` or `GEMINI_API_KEY`, **or none** with `LLM_PROVIDER=openai-compatible` (+ `ffmpeg` on PATH) |
 
@@ -322,9 +340,10 @@ AI-Youtube-Shorts-Generator/
     ├── pipeline.py               mode dispatcher (api ↔ local)
     └── local/                    --mode local backends (offline)
         ├── downloader.py         yt-dlp download
-        ├── transcriber.py        faster-whisper transcription
+        ├── transcriber.py        WhisperX word-level transcription (faster-whisper fallback)
+        ├── captions.py           ASS subtitle generation (hype / clean / karaoke)
         ├── llm.py                OpenAI / Gemini / OpenAI-compatible client selector
-        └── clipper.py            ffmpeg cut + OpenCV vertical crop
+        └── clipper.py            ffmpeg cut + OpenCV vertical crop + caption burn
 ```
 
 ## Troubleshooting

@@ -9,6 +9,7 @@ Two stages per highlight:
 import os
 import subprocess
 import time
+from functools import lru_cache
 from typing import Dict, List, Optional, Tuple
 
 from ..config import LOCAL_OUTPUT_DIR
@@ -178,18 +179,111 @@ def _reframe_vertical(
     return out_path
 
 
+def _probe_size(media_path: str) -> Optional[Tuple[int, int]]:
+    """Return (width, height) of a media file via ffprobe, or None on failure."""
+    try:
+        out = subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=width,height",
+                "-of", "csv=s=x:p=0",
+                media_path,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        parts = [int(p) for p in out.stdout.strip().split("x") if p.strip().isdigit()]
+        if len(parts) == 2:
+            return (parts[0], parts[1])
+    except (ValueError, subprocess.CalledProcessError, FileNotFoundError):
+        pass
+    return None
+
+
+@lru_cache(maxsize=1)
+def _ffmpeg_has_libass() -> bool:
+    """True when ffmpeg was built with the `ass` subtitle filter (libass)."""
+    try:
+        out = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-h", "filter=ass"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return "Filter ass" in (out.stdout + out.stderr)
+    except (FileNotFoundError, OSError):
+        return False
+
+
+def _ass_filter_arg(ass_path: str) -> str:
+    """Build a filtergraph-safe `ass=filename=...` argument for a Windows path.
+
+    ffmpeg escapes in two passes: a generic pass turns ``\\x`` into ``x``, then
+    the option pass splits ``=``/``:``/``,``/``;`` and honours remaining
+    backslash escapes. A single ``\\:`` is therefore consumed by the generic
+    pass and the drive letter's ``:`` still splits the option — the escape
+    backslash itself must be doubled so the option pass sees ``\\:``.
+    """
+    safe = ass_path.replace("\\", "/")
+    for special in ("\\", ":", ",", ";", "'", "[", "]", "#"):
+        safe = safe.replace(special, "\\" + special)
+    safe = safe.replace("\\", "\\\\")
+    return f"ass=filename={safe}"
+
+
+def _burn_captions(in_path: str, out_path: str, ass_path: str, silent_path: str) -> Optional[str]:
+    """Re-encode `in_path` with the ASS captions burned in. Returns the output
+    path on success, or None (without touching `out_path`) when ffmpeg lacks
+    libass so the plain clip can still be produced."""
+    if not _ffmpeg_has_libass():
+        print(
+            "[clip/local] warn: ffmpeg was not built with libass - skipping captions "
+            "(clip still produced)",
+            flush=True,
+        )
+        return None
+
+    _ = silent_path  # reserved for a future sidecar pass
+    cmd = [
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-i", in_path,
+        "-vf", _ass_filter_arg(ass_path),
+        "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+        "-c:a", "copy",
+        "-map", "0:v:0", "-map", "0:a:0?",
+        out_path,
+    ]
+    try:
+        subprocess.run(cmd, check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"[clip/local] caption burn failed: {e} (keeping plain clip)", flush=True)
+        return None
+    return out_path
+
+
 def crop_clip_local(
     source_path: str,
     start_time: float,
     end_time: float,
     aspect_ratio: Optional[str],
     out_path: str,
+    *,
+    words: Optional[List[Dict]] = None,
+    caption_style: Optional[str] = None,
+    captions: bool = True,
 ) -> str:
     """Cut (and optionally reframe) one highlight, returning the local mp4 path.
 
     When `aspect_ratio` is None the sliced clip is kept as-is, preserving the
     source video's native resolution and aspect ratio. When a ratio is given
     (e.g. "9:16") the cut is reframed to it with face tracking.
+
+    When `captions` is True and `words` are supplied, an ASS subtitle is built
+    from the word timestamps and burned in with ffmpeg's `ass` filter as a
+    second pass. If ffmpeg lacks libass the clip is still produced — just
+    without captions.
 
     Intermediates live in a `.tmp` subfolder beside the output so the
     deliverable directory never shows `short_NN.mp4.cut.mp4` leftovers, and
@@ -201,16 +295,41 @@ def crop_clip_local(
     os.makedirs(tmp_dir, exist_ok=True)
     base = os.path.splitext(os.path.basename(out_path))[0]
     cut_path = os.path.join(tmp_dir, base + ".cut.mp4")
+    reframed_path = os.path.join(tmp_dir, base + ".reframed.mp4")
     silent_path = os.path.join(tmp_dir, base + ".silent.mp4")
+    ass_path = os.path.join(tmp_dir, base + ".captions.ass")
+
+    caption_words = words if captions else None
 
     try:
         _cut_subclip(source_path, start_time, end_time, cut_path)
         if aspect_ratio is None:
-            os.replace(cut_path, out_path)
+            staged = cut_path
         else:
-            _reframe_vertical(cut_path, out_path, aspect_ratio, silent_path=silent_path)
+            staged = reframed_path
+            _reframe_vertical(cut_path, staged, aspect_ratio, silent_path=silent_path)
+
+        if caption_words:
+            from .captions import build_ass_for_clip, write_ass_file
+
+            size = _probe_size(staged)
+            width, height = size if size else (720, 1280)
+            ass_content = build_ass_for_clip(
+                caption_words, style=caption_style, width=width, height=height
+            )
+            if ass_content:
+                write_ass_file(ass_content, ass_path)
+                burned = _burn_captions(staged, out_path, ass_path, silent_path)
+                if burned is not None:
+                    return burned
+                # burn failed (no libass or ffmpeg error) -> fall through to
+                # the plain staged clip so a short is still produced
+            else:
+                print("[clip/local] no word timestamps for clip - no captions to burn", flush=True)
+
+        os.replace(staged, out_path)
     finally:
-        for p in (cut_path, silent_path):
+        for p in (cut_path, reframed_path, silent_path, ass_path):
             _remove_quietly(p)
     return out_path
 
@@ -227,6 +346,10 @@ def crop_highlights_local(
     highlights: List[Dict],
     aspect_ratio: Optional[str] = None,
     out_dir: Optional[str] = None,
+    *,
+    transcript: Optional[Dict] = None,
+    caption_style: Optional[str] = None,
+    captions: bool = True,
 ) -> List[Dict]:
     # Default to the source video's own folder so a YouTube download renders
     # each video's shorts beside it, under `output/<video title>/`.
@@ -239,12 +362,24 @@ def crop_highlights_local(
         out_path = _short_output_path(source_path, out_dir, i)
         print(f"[clip/local] {i}/{len(highlights)}: {h.get('title', '(untitled)')} -> {out_path}", flush=True)
         try:
+            words = None
+            if captions and transcript:
+                from .captions import slice_words_for_clip
+
+                words = slice_words_for_clip(
+                    transcript,
+                    float(h["start_time"]),
+                    float(h["end_time"]),
+                )
             crop_clip_local(
                 source_path,
                 float(h["start_time"]),
                 float(h["end_time"]),
                 aspect_ratio,
                 out_path,
+                words=words,
+                caption_style=caption_style,
+                captions=captions,
             )
             results.append({**h, "clip_url": out_path})
         except Exception as e:

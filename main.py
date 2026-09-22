@@ -35,6 +35,17 @@ def main() -> int:
     )
     parser.add_argument("--format", default="720", help="Source download resolution: 360 / 480 / 720 / 1080 (default: 720)")
     parser.add_argument("--language", default=None, help="Force Whisper language code, e.g. 'en' (default: auto-detect)")
+    parser.add_argument(
+        "--caption-style",
+        choices=["hype", "clean", "karaoke"],
+        default="hype",
+        help="Burned-in caption look, local mode only: hype (default) / clean / karaoke",
+    )
+    parser.add_argument(
+        "--no-captions",
+        action="store_true",
+        help="Skip burned-in word-synced captions (local mode only)",
+    )
     parser.add_argument("--output-json", default=None, help="Write the full result JSON to this path")
     args = parser.parse_args()
 
@@ -46,6 +57,8 @@ def main() -> int:
             download_format=args.format,
             language=args.language,
             mode=args.mode,
+            caption_style=args.caption_style,
+            captions=not args.no_captions,
         )
     except Exception as e:
         print(f"\nFAILED: {e}", file=sys.stderr)
