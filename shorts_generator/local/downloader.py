@@ -84,11 +84,24 @@ def _resolve_local_path(source: str) -> Optional[str]:
 
 
 def _existing_download(out_dir: str, video_id: str) -> Optional[str]:
-    """Return a cached download path if we already have this YouTube id."""
+    """Return a cached download path if we already have this YouTube id.
+
+    Matches both the legacy flat layout (`output/source_<id>.mp4`) and the
+    current title-folder layout (`output/<title>/<title>_source_<id>.mp4`),
+    so previously cached videos keep validating without a re-download.
+    """
+    import glob
     for ext in (".mp4", ".mkv", ".webm"):
-        candidate = os.path.join(out_dir, f"source_{video_id}{ext}")
-        if os.path.exists(candidate):
-            return candidate
+        legacy = os.path.join(out_dir, f"source_{video_id}{ext}")
+        if os.path.exists(legacy):
+            return legacy
+        matches = glob.glob(
+            os.path.join(out_dir, "**", f"*_source_{video_id}{ext}"),
+            recursive=True,
+        )
+        for candidate in matches:
+            if os.path.isfile(candidate):
+                return candidate
     return None
 
 
@@ -110,10 +123,12 @@ def download_youtube_local(video_url: str, fmt: str = "720", out_dir: Optional[s
             print(f"[download/local] reusing cached download: {cached}", flush=True)
             return cached
 
-    print(f"[download/local] {video_url} @ {fmt}p → {out_dir}/", flush=True)
+    print(f"[download/local] {video_url} @ {fmt}p -> {out_dir}/<video-title>/", flush=True)
     ydl_opts = {
         "format": _format_for(fmt),
-        "outtmpl": os.path.join(out_dir, "source_%(id)s.%(ext)s"),
+        # One folder per video, named by its title, so the rest of the pipeline
+        # (shorts naming, .srt cache) is self-describing and survives re-runs.
+        "outtmpl": os.path.join(out_dir, "%(title)s", "%(title)s_source_%(id)s.%(ext)s"),
         "merge_output_format": "mp4",
         "quiet": True,
         "no_warnings": True,

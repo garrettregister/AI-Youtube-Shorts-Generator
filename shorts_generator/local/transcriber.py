@@ -8,14 +8,15 @@ import re
 from pathlib import Path
 from typing import Dict, Optional
 
-from ..config import LOCAL_OUTPUT_DIR, LOCAL_WHISPER_DEVICE, LOCAL_WHISPER_MODEL
+from ..config import LOCAL_WHISPER_DEVICE, LOCAL_WHISPER_MODEL
 
 
 def _transcript_cache_path(media_path: str) -> Path:
-    """Return the .srt cache path for a media file."""
-    cache_dir = Path(LOCAL_OUTPUT_DIR)
+    """Return the .srt cache path for a media file (kept beside the source)."""
+    media = Path(media_path).resolve()
+    cache_dir = media.parent
     cache_dir.mkdir(parents=True, exist_ok=True)
-    return cache_dir / (Path(media_path).stem + ".srt")
+    return cache_dir / (media.stem + ".srt")
 
 
 def _format_srt_timestamp(seconds: float) -> str:

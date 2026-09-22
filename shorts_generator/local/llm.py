@@ -1,7 +1,10 @@
-"""Local LLM backend — OpenAI or Gemini, selected by LLM_PROVIDER."""
+"""Local LLM backend — OpenAI, Gemini, or OpenAI-compatible (Ollama / llama.cpp)."""
 from ..config import (
     GEMINI_MODEL,
     LLM_PROVIDER,
+    LOCAL_LLM_API_KEY,
+    LOCAL_LLM_BASE_URL,
+    LOCAL_LLM_MODEL,
     OPENAI_MODEL,
     require_gemini_key,
     require_openai_key,
@@ -50,6 +53,38 @@ def call_gemini_llm(prompt: str) -> str:
     return response.text or ""
 
 
+def call_openai_compatible_llm(prompt: str) -> str:
+    """Any OpenAI-compatible /v1 server — Ollama, llama-server, LM Studio, vLLM.
+
+    Selected when LLM_PROVIDER=openai-compatible (alias: ollama). Needs no API key.
+    """
+    try:
+        from openai import OpenAI  # type: ignore
+    except ImportError as e:
+        raise RuntimeError(
+            "openai is required for LLM_PROVIDER=openai-compatible. Install it with:\n"
+            "    pip install -r requirements-local.txt"
+        ) from e
+
+    client = OpenAI(base_url=LOCAL_LLM_BASE_URL, api_key=LOCAL_LLM_API_KEY or "ollama")
+    messages = [{"role": "user", "content": prompt}]
+    try:
+        response = client.chat.completions.create(
+            model=LOCAL_LLM_MODEL,
+            temperature=0.2,
+            messages=messages,
+            response_format={"type": "json_object"},
+        )
+    except Exception:
+        # Older Ollama / llama-server builds may not support response_format.
+        response = client.chat.completions.create(
+            model=LOCAL_LLM_MODEL,
+            temperature=0.2,
+            messages=messages,
+        )
+    return response.choices[0].message.content or ""
+
+
 def call_local_llm(prompt: str) -> str:
     """Dispatch to the configured local LLM provider."""
     provider = (LLM_PROVIDER or "openai").strip().lower()
@@ -57,6 +92,9 @@ def call_local_llm(prompt: str) -> str:
         return call_openai_llm(prompt)
     if provider == "gemini":
         return call_gemini_llm(prompt)
+    if provider in ("openai-compatible", "ollama"):
+        return call_openai_compatible_llm(prompt)
     raise RuntimeError(
-        f"Unknown LLM_PROVIDER={provider!r}. Use 'openai' or 'gemini'."
+        f"Unknown LLM_PROVIDER={provider!r}. "
+        "Use 'openai', 'gemini', or 'openai-compatible' (alias 'ollama')."
     )

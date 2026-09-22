@@ -9,21 +9,28 @@ from . import muapi
 from .downloader import _extract_video_url
 
 
-def crop_clip(source_video_url: str, start_time: float, end_time: float, aspect_ratio: str = "9:16") -> str:
-    """Submit one autocrop job and return the URL of the rendered short."""
+def crop_clip(source_video_url: str, start_time: float, end_time: float, aspect_ratio: str) -> str:
+    """Submit one autocrop job and return the URL of the rendered short.
+
+    `aspect_ratio` is required: MuAPI autocrop only supports 9:16 / 1:1 / 4:5.
+    """
     payload = {
         "video_url": source_video_url,
         "start_time": float(start_time),
         "end_time": float(end_time),
         "aspect_ratio": aspect_ratio,
     }
-    print(f"[clip] {start_time:.1f}s → {end_time:.1f}s @ {aspect_ratio}", flush=True)
+    print(f"[clip] {start_time:.1f}s -> {end_time:.1f}s @ {aspect_ratio}", flush=True)
     result = muapi.run("autocrop", payload, label=f"autocrop({start_time:.0f}-{end_time:.0f})")
     return _extract_video_url(result)
 
 
-def crop_highlights(source_video_url: str, highlights: list, aspect_ratio: str = "9:16") -> list:
-    """Crop every highlight, attaching the resulting URL back onto the dict."""
+def crop_highlights(source_video_url: str, highlights: list, aspect_ratio: str) -> list:
+    """Crop every highlight, attaching the resulting URL back onto the dict.
+
+    `aspect_ratio` is required — no silent default (MuAPI autocrop cannot
+    "keep the source ratio").
+    """
     out = []
     for i, h in enumerate(highlights, 1):
         print(f"[clip] {i}/{len(highlights)}: {h.get('title', '(untitled)')}", flush=True)

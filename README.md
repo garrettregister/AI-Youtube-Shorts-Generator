@@ -41,7 +41,7 @@ Built for creators, agencies, and developers who don't want to pay $20–$300/mo
 ## Features
 
 - **🎬 YouTube In, Vertical Out**: Hand it any YouTube URL — get back N viral-ready 9:16 mp4s
-- **🔀 Two Modes — API (fast) or Local (offline)**: Default `--mode api` uses MuAPI for download/transcription/cropping; `--mode local` runs entirely on your machine with `yt-dlp`, `faster-whisper`, and `ffmpeg`/`opencv`, and lets you pick OpenAI or Gemini for highlight ranking
+- **🔀 Two Modes — API (fast) or Local (offline)**: Default `--mode api` uses MuAPI for download/transcription/cropping; `--mode local` runs entirely on your machine with `yt-dlp`, `faster-whisper`, and `ffmpeg`/`opencv`, and lets you pick OpenAI, Gemini, or any local OpenAI-compatible LLM (Ollama, llama.cpp, LM Studio, vLLM) for highlight ranking
 - **🤖 Virality-Aware Highlight Selection**: Clips ranked on hooks, emotional peaks, opinion bombs, revelation moments, conflict, quotable lines, story peaks, and practical value — not just generic "interesting"
 - **📈 Score + Hook + Reason for Every Clip**: Each highlight comes with a viral score, an opening hook line, and a one-sentence explanation of why it works
 - **🎤 Whisper Transcription, Your Choice**: Cloud (`/openai-whisper` via MuAPI) or local (`faster-whisper`, CPU or CUDA) — same downstream output shape
@@ -64,7 +64,7 @@ Don't want to self-host? The [AI Clipping API](https://muapi.ai/playground/ai-cl
 
 - Python 3.10+
 - For **API mode (default)**: a MuAPI key — powers download, transcription, highlight ranking, and clipping in a single dependency
-- For **Local mode** (`--mode local`): `ffmpeg` on your PATH and an LLM API key (`OPENAI_API_KEY` or `GEMINI_API_KEY`; only the LLM step is remote)
+- For **Local mode** (`--mode local`): `ffmpeg` on your PATH and an LLM — either a cloud key (`OPENAI_API_KEY` or `GEMINI_API_KEY`) or a local server via Ollama / llama.cpp with `LLM_PROVIDER=openai-compatible` (no API key, fully offline)
 
 ### Steps
 
@@ -95,15 +95,26 @@ Don't want to self-host? The [AI Clipping API](https://muapi.ai/playground/ai-cl
    MUAPI_API_KEY=your_muapi_key_here
 
    # Local mode (--mode local)
-   LLM_PROVIDER=openai         # openai or gemini
+   LLM_PROVIDER=openai         # openai | gemini | openai-compatible (alias: ollama)
    OPENAI_API_KEY=your_openai_key_here
    OPENAI_MODEL=gpt-4o-mini          # optional, default gpt-4o-mini
    GEMINI_API_KEY=your_gemini_key_here
    GEMINI_MODEL=gemini-2.5-flash      # optional, default gemini-2.5-flash
+
+   # Fully local LLM (no API key) — LLM_PROVIDER=openai-compatible
+   # Ollama (default base URL):
+   # LOCAL_LLM_BASE_URL=http://localhost:11434/v1
+   # LOCAL_LLM_MODEL=llama3.1:8b
+   # llama.cpp llama-server:
+   # LOCAL_LLM_BASE_URL=http://localhost:8080/v1
+   # LOCAL_LLM_MODEL=your-model-name
+
    LOCAL_WHISPER_MODEL=base          # tiny / base / small / medium / large-v3
    LOCAL_WHISPER_DEVICE=auto         # auto / cpu / cuda
    LOCAL_OUTPUT_DIR=output           # where local mp4s land
    ```
+
+   **Tip for a 100% local stack** (no OpenAI / Gemini / MuAPI keys): set `LLM_PROVIDER=openai-compatible`, point `LOCAL_LLM_BASE_URL` at your Ollama or `llama-server` instance, and pull a model with solid JSON output — see [Recommended local models](#recommended-local-models).
 
 ## Usage
 
@@ -120,6 +131,37 @@ python main.py "https://www.youtube.com/watch?v=VIDEO_ID" --mode local
 ```
 
 Local mode writes the rendered shorts to `./output/short_01.mp4`, `short_02.mp4`, … (override with `LOCAL_OUTPUT_DIR`).
+
+### Fully local with Ollama or llama.cpp (no API key)
+
+```bash
+# Ollama
+ollama pull llama3.1:8b
+export LLM_PROVIDER=openai-compatible
+export LOCAL_LLM_BASE_URL=http://localhost:11434/v1
+export LOCAL_LLM_MODEL=llama3.1:8b
+
+# …or llama.cpp (llama-server --port 8080)
+# export LLM_PROVIDER=openai-compatible
+# export LOCAL_LLM_BASE_URL=http://localhost:8080/v1
+# export LOCAL_LLM_MODEL=your-model-name
+
+python main.py "https://www.youtube.com/watch?v=VIDEO_ID" --mode local
+```
+
+Download, transcription, highlight ranking, and crop all run on your machine — no `OPENAI_API_KEY`, `GEMINI_API_KEY`, or `MUAPI_API_KEY` required.
+
+#### Recommended local models
+
+Highlight ranking needs reliable JSON and a decent context window (transcripts are chunked at ~20 minutes).
+
+| VRAM | Suggested `LOCAL_LLM_MODEL` | Notes |
+|------|----------------------------|-------|
+| ~8 GB | `llama3.1:8b` (default) | Good all-rounder, solid JSON |
+| ~12–16 GB | `qwen2.5:14b` | Stronger structured output |
+| ~24 GB+ | `qwen2.5:32b` | Best quality if it fits |
+
+Any chat model that follows JSON instructions will work; larger models rank highlights more consistently.
 
 ### With options
 
@@ -175,9 +217,9 @@ xargs -a urls.txt -I{} python main.py "{}"
 
 | Flag | Default | Notes |
 |------|---------|-------|
-| `--mode` | `api` | `api` (MuAPI, fast, no setup) or `local` (remote URL, `file://`, or local path + faster-whisper + LLM provider + ffmpeg) |
+| `--mode` | `api` | `api` (MuAPI, fast, no setup) or `local` (remote URL, `file://`, or local path + faster-whisper + `LLM_PROVIDER` + ffmpeg) |
 | `--num-clips` | `3` | How many shorts to render |
-| `--aspect-ratio` | `9:16` | Any ratio; `9:16` for TikTok/Reels, `1:1` for square |
+| `--aspect-ratio` | source ratio | Any ratio; `9:16` for TikTok/Reels, `1:1` for square. Unset = keep the source video's own ratio (local mode; API mode requires an explicit ratio) |
 | `--format` | `720` | Source download resolution: `360` / `480` / `720` / `1080` |
 | `--language` | auto | Force Whisper language code (e.g. `en`) |
 | `--output-json` | — | Dump the full result (transcript + all candidates) to a file |
@@ -188,10 +230,10 @@ xargs -a urls.txt -I{} python main.py "{}"
 |---|---|---|
 | Download | MuAPI `/youtube-download` | `yt-dlp` for remote URLs, direct file path for local inputs |
 | Transcription | MuAPI `/openai-whisper` | `faster-whisper` (CPU or CUDA) |
-| Highlight LLM | MuAPI `gpt-5-mini` | `LLM_PROVIDER=openai` uses OpenAI (`gpt-4o-mini` by default), `LLM_PROVIDER=gemini` uses Gemini (`gemini-2.5-flash` by default) |
+| Highlight LLM | MuAPI `gpt-5-mini` | `LLM_PROVIDER=openai` uses OpenAI (`gpt-4o-mini`), `LLM_PROVIDER=gemini` uses Gemini (`gemini-2.5-flash`), `LLM_PROVIDER=openai-compatible` (alias `ollama`) uses any local OpenAI-style server (Ollama, llama.cpp, …) |
 | Vertical crop | MuAPI `/autocrop` | `ffmpeg` + OpenCV face tracking |
 | Output | hosted URLs | local mp4 paths |
-| Required keys | `MUAPI_API_KEY` | `OPENAI_API_KEY` or `GEMINI_API_KEY` (+ `ffmpeg` on PATH) |
+| Required keys | `MUAPI_API_KEY` | `OPENAI_API_KEY` or `GEMINI_API_KEY`, **or none** with `LLM_PROVIDER=openai-compatible` (+ `ffmpeg` on PATH) |
 
 ## How It Works
 
@@ -281,7 +323,7 @@ AI-Youtube-Shorts-Generator/
     └── local/                    --mode local backends (offline)
         ├── downloader.py         yt-dlp download
         ├── transcriber.py        faster-whisper transcription
-        ├── llm.py                OpenAI or Gemini client selector
+        ├── llm.py                OpenAI / Gemini / OpenAI-compatible client selector
         └── clipper.py            ffmpeg cut + OpenCV vertical crop
 ```
 

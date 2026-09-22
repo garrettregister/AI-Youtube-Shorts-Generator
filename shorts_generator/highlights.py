@@ -183,14 +183,21 @@ def chunk_transcript(transcript: Dict) -> List[Dict]:
     start = 0
     while start < duration:
         end = min(start + CHUNK_SIZE_SECONDS, duration)
+        # Rebase chunk segments to a local origin so the transcript text the model
+        # sees matches the `duration` used for sanitization. Without this, chunks
+        # past the first expose absolute video timestamps (e.g. "[1500.2s]") which
+        # the sanitizer clamps against the chunk length, dropping every highlight.
         chunk_segs = [
-            s for s in segments
+            {**s, "start": s["start"] - start, "end": s["end"] - start}
+            for s in segments
             if s["start"] >= start and s["end"] <= end + CHUNK_OVERLAP_SECONDS
         ]
         if chunk_segs:
             chunk = dict(transcript)
             chunk["segments"] = chunk_segs
-            chunk["duration"] = end - start
+            # Duration covers the forward overlap tail too, so the sanitizer's
+            # clamp window never drops highlights the model places in it.
+            chunk["duration"] = end + CHUNK_OVERLAP_SECONDS - start
             chunk["_offset"] = start
             chunks.append(chunk)
         start += CHUNK_SIZE_SECONDS - CHUNK_OVERLAP_SECONDS
@@ -233,7 +240,7 @@ def call_highlight_api(
 
         if attempt < MAX_HIGHLIGHT_API_ATTEMPTS:
             print(
-                f"[highlights] invalid model output on attempt {attempt}/{MAX_HIGHLIGHT_API_ATTEMPTS}; retrying",
+                f"[highlights] invalid model output on attempt {attempt}/{MAX_HIGHLIGHT_API_ATTEMPTS} ({last_error}); retrying",
                 flush=True,
             )
             prompt = (

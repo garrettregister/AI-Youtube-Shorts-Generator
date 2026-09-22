@@ -3,8 +3,10 @@
 Two modes:
   * mode="api"   (default) — MuAPI does download / transcribe / LLM / autocrop.
                               Fast, no local deps, pay-per-call.
-  * mode="local"            — yt-dlp + faster-whisper + OpenAI or Gemini + ffmpeg/opencv.
-                              Self-hosted, LLM_PROVIDER selects OpenAI or Gemini.
+  * mode="local"            — yt-dlp + faster-whisper + OpenAI, Gemini, or a
+                              local OpenAI-compatible LLM (Ollama / llama.cpp)
+                              + ffmpeg/opencv. Self-hosted; LLM_PROVIDER selects
+                              the highlight-ranking backend.
 """
 from typing import Dict, List, Optional
 
@@ -17,7 +19,7 @@ from .transcriber import transcribe
 def _run_local(
     youtube_url: str,
     num_clips: int,
-    aspect_ratio: str,
+    aspect_ratio: Optional[str],
     download_format: str,
     language: Optional[str],
 ) -> Dict:
@@ -56,10 +58,15 @@ def _run_local(
 def _run_api(
     youtube_url: str,
     num_clips: int,
-    aspect_ratio: str,
+    aspect_ratio: Optional[str],
     download_format: str,
     language: Optional[str],
 ) -> Dict:
+    if not aspect_ratio:
+        raise RuntimeError(
+            "MuAPI autocrop only supports 9:16 / 1:1 / 4:5 ratios. "
+            "Pass --aspect-ratio explicitly, or use --mode local to keep the source video's ratio."
+        )
     source_url = download_youtube(youtube_url, fmt=download_format)
 
     transcript = transcribe(source_url, language=language)
@@ -90,7 +97,7 @@ def _run_api(
 def generate_shorts(
     youtube_url: str,
     num_clips: int = 3,
-    aspect_ratio: str = "9:16",
+    aspect_ratio: Optional[str] = None,
     download_format: str = "720",
     language: Optional[str] = None,
     mode: str = "api",
@@ -100,11 +107,12 @@ def generate_shorts(
     Args:
         youtube_url: source URL.
         num_clips: how many shorts to render.
-        aspect_ratio: e.g. "9:16", "1:1".
+        aspect_ratio: e.g. "9:16", "1:1". None (default) keeps the source
+            video's own ratio in local mode; API mode requires an explicit ratio.
         download_format: source resolution ("360" / "480" / "720" / "1080").
         language: ISO-639-1 to force Whisper language detection.
         mode: "api" (default, MuAPI) or "local" (yt-dlp + faster-whisper +
-            OpenAI or Gemini + ffmpeg).
+            OpenAI / Gemini / OpenAI-compatible local LLM + ffmpeg).
 
     Returns:
         {

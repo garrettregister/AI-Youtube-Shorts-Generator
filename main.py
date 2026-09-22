@@ -25,10 +25,14 @@ def main() -> int:
         "--mode",
         choices=["api", "local"],
         default="api",
-        help="api (default, MuAPI) or local (remote URL, file://, or local path + faster-whisper + LLM provider + ffmpeg).",
+        help="api (default, MuAPI) or local (yt-dlp + faster-whisper + LLM_PROVIDER: openai/gemini/openai-compatible + ffmpeg).",
     )
     parser.add_argument("--num-clips", type=int, default=3, help="How many shorts to render (default: 3)")
-    parser.add_argument("--aspect-ratio", default="9:16", help="Output aspect ratio (default: 9:16)")
+    parser.add_argument(
+        "--aspect-ratio",
+        default=None,
+        help="Output aspect ratio, e.g. 9:16 / 16:9 / 1:1 (unset = keep the YouTube source's own ratio)",
+    )
     parser.add_argument("--format", default="720", help="Source download resolution: 360 / 480 / 720 / 1080 (default: 720)")
     parser.add_argument("--language", default=None, help="Force Whisper language code, e.g. 'en' (default: auto-detect)")
     parser.add_argument("--output-json", default=None, help="Write the full result JSON to this path")
