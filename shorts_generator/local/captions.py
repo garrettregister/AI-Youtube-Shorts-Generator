@@ -5,9 +5,15 @@ into a static `.ass` file, rendered by ffmpeg's `ass` filter. The whole point
 is word-for-word sync: each caption chunk highlights words as they are spoken,
 styled to match the CapCut / Opus Clip / Submagic look.
 
-Per-word effects are implemented with explicit `\\t(...)` override tags driven
-from each word's own start/end times, rather than libass `\\k` karaoke tokens,
-so behaviour is consistent across renderers.
+Word timing is always relative to the Dialogue line start (which is the first
+word's timestamp), as the ASS spec requires. Sticky styles (hype/karaoke) use
+karaoke `\\k` tokens: each word is preceded by `{\\k D}` where D is the
+centisecond span from that word's start to the next word's start (the last
+word uses its own spoken span), so the karaoke fill boundary reaches each word
+exactly when it is spoken, sweeps through it as it is spoken, and all prior
+words stay lit. No colour animation is involved, so nothing bleeds into later
+words. Non-sticky (clean) styles use explicit `\\t()` active->dim colour
+windows per word instead.
 """
 import os
 import re
@@ -109,7 +115,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Caption,{fontname},{fontsize},&H00FFFFFF,&H000000FF,&H00{outline_hex},&H64000000,{bold},0,0,0,100,100,0,0,1,{outline},{shadow},2,{margin_l},{margin_r},{margin_v},1
+Style: Caption,{fontname},{fontsize},&H00{primary_hex},&H00{secondary_hex},&H00{outline_hex},&H64000000,{bold},0,0,0,100,100,0,0,1,{outline},{shadow},2,{margin_l},{margin_r},{margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -215,18 +221,42 @@ def _group_event_text(
 ) -> str:
     """ASS markup for one caption group.
 
-    Each word gets an explicit `\\t(ws,we,\\1c<active>)` colour override; the
-    words before the active word stay dim (inactive colour). With sticky
-    karaoke the colour is never reset, so all prior words stay highlighted.
+    Word timing is relative to the group's first word, which is also the
+    Dialogue line start (ASS ``\\k`` for karaoke and ``\\t()`` values are
+    line-relative, not absolute timestamps).
+
+    Sticky presets (hype/karaoke) use karaoke ``\\k`` tokens. libass renders a
+    karaoke line as a moving boundary: words to the left of it (already played)
+    show in the PrimaryColour, words to the right still in the SecondaryColour,
+    so the style carries the active colour in *primary* and the text colour in
+    secondary. The token before word *i* carries the duration
+    ``D_i = start_{i+1} - start_i`` in centiseconds (the last word uses its own
+    spoken span ``end - start``), so the fill boundary reaches each word's
+    start exactly when that word is spoken, has filled all prior words, and
+    leaves the final word lit to the end of the line. Non-sticky (clean)
+    presets use explicit per-word ``\\t()`` active->dim windows instead.
     """
+    group_start = group[0]["start"]
+    starts = [max(0, int(round((w["start"] - group_start) * 100))) for w in group]
+    ends = [max(0, int(round((w["end"] - group_start) * 100))) for w in group]
+    for i in range(1, len(starts)):
+        starts[i] = max(starts[i], starts[i - 1])
+
+    durations: List[int] = []
+    for i in range(len(group)):
+        if i + 1 < len(group):
+            durations.append(max(1, starts[i + 1] - starts[i]))
+        else:
+            durations.append(max(1, ends[i] - starts[i]))
+
     text_parts = []
     prev_end = 0.0
     for i, w in enumerate(group):
-        ws_cs = max(0, int(round(w["start"] * 100)))
-        we_cs = max(ws_cs + 1, int(round(w["end"] * 100)))
+        ws_cs = starts[i]
+        we_cs = max(ws_cs + 1, ends[i])
 
         if preset.sticky:
-            color_tags = f"{{\\t({ws_cs},{we_cs},\\1c{active_hex})}}"
+            color_tags = f"{{\\k{durations[i]}}}"
         else:
             reset_cs = we_cs + 4
             color_tags = (
@@ -271,6 +301,14 @@ def build_ass_for_clip(
     active_hex = _ass_color(preset.active_color)
     dim_hex = _ass_color(preset.text_color)
     outline_hex = _ass_color(preset.outline_color)
+    # libass draws the played (left) part of a karaoke line in the
+    # PrimaryColour and the upcoming (right) part in the SecondaryColour --
+    # the reverse of the ASS spec convention (see ass_parse.c's
+    # ass_process_karaoke_effects: "left part is filled with PrimaryColour,
+    # right one - with SecondaryColour"). So for karaoke styling the primary
+    # carries the active highlight colour and the secondary the text colour.
+    primary_hex = active_hex if preset.sticky else dim_hex
+    secondary_hex = dim_hex
 
     margin_l = max(10, int(width * preset.margin_h_ratio))
     margin_r = margin_l
@@ -284,7 +322,9 @@ def build_ass_for_clip(
         height=height,
         fontname=fontname,
         fontsize=fontsize,
+        primary_hex=primary_hex,
         outline_hex=outline_hex,
+        secondary_hex=secondary_hex,
         bold=bold,
         outline=int(preset.outline),
         shadow=int(preset.shadow),

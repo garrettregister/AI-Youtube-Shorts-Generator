@@ -23,6 +23,10 @@ from shorts_generator.local.captions import (  # noqa: E402
 )
 
 
+def _event_texts(ass: str):
+    return [ln for ln in ass.splitlines() if ln.startswith("Dialogue: 0,")]
+
+
 def _transcript_with_words():
     return {
         "duration": 10.0,
@@ -133,6 +137,77 @@ def test_build_ass_contains_dialogue_lines():
     assert "Dialogue: 0,0:00:00.20,0:00:01.40" in ass  # first group start/end
     assert ass.count("Dialogue: 0,") == 2  # 3 words / 2 per group
     assert "\\t(" in ass  # per-word overrides present
+
+
+def test_sticky_styles_carry_active_colour_in_primary():
+    words = slice_words_for_clip(_transcript_with_words(), 0.0, 3.0)
+    # libass draws the played part of a karaoke line in the PrimaryColour and
+    # the upcoming part in the SecondaryColour (reverse of the ASS spec), so
+    # sticky styles must put the active colour in *primary* and the plain text
+    # in secondary, or the highlight renders inside-out.
+    ass = build_ass_for_clip(words, style="hype")
+    # hype active #FFD60A -> BBGGRR 0AD6FF as PrimaryColour, white secondary.
+    assert "&H000AD6FF,&H00FFFFFF" in ass
+    ass = build_ass_for_clip(words, style="karaoke")
+    # karaoke active #5BFF6B -> BBGGRR 6BFF5B as PrimaryColour, white secondary.
+    assert "&H006BFF5B,&H00FFFFFF" in ass
+
+
+def _karaoke_tokens(event):
+    """The `\\k` centisecond values in the order they appear in a line."""
+    parts = event.split("{\\k")[1:]
+    return [int(p.split("}")[0]) for p in parts]
+
+
+def test_sticky_karaoke_uses_karaoke_tokens_keyed_to_word_starts():
+    words = slice_words_for_clip(_transcript_with_words(), 0.0, 3.0)
+    ass = build_ass_for_clip(words, style="karaoke", words_per_group=3)
+    assert "Dialogue: 0,0:00:00.20,0:00:02.10" in ass
+    event = _event_texts(ass)[0]
+    # Line starts at hello 0.20. Karaoke \k sweeps the PrimaryColour (set to
+    # the active colour) forward and never resets rightward text.
+    #   hello 0.20-0.80, world 0.85-1.40, again 1.45-2.10 (line-relative).
+    # \k before each word = start of next word - start of this word (last
+    # word = its own spoken span, 190 - 125 = 65cs).
+    assert _karaoke_tokens(event) == [65, 60, 65]
+    assert "{\\fad(60,60)}" in event
+    assert "{\\k65}hello" in event
+    assert "{\\k60}world" in event
+    assert "{\\k65}again" in event
+    # No per-word \1c colour overrides or \t flips: highlight is pure \k.
+    assert "\\1c" not in event
+    assert "\\t(" not in event
+    # Cumulative karaoke time reaches the end of the line at the last word's
+    # end (65 + 60 + 65 = 190cs = 2.10 - 0.20).
+    assert sum(_karaoke_tokens(event)) == 190
+
+
+def test_sticky_hype_preserves_karaoke_tokens_with_pop():
+    words = slice_words_for_clip(_transcript_with_words(), 0.0, 3.0)
+    ass = build_ass_for_clip(words, style="hype", words_per_group=3)
+    event = _event_texts(ass)[0]
+    # hype is sticky: same \k word-start keys, pop \fscx tags interleaved.
+    assert _karaoke_tokens(event) == [65, 60, 65]
+    assert "\\1c" not in event
+    assert "\\fscx126" in event
+    assert event.index("{\\k60}") < event.index("world")
+
+
+def test_clean_time_windows_are_line_relative():
+    words = slice_words_for_clip(_transcript_with_words(), 0.0, 3.0)
+    ass = build_ass_for_clip(words, style="clean", words_per_group=3)
+    # First word of the line animates from 0, not from its absolute 20cs.
+    assert "{\\t(0,60,\\1c" in ass
+    assert "\\t(20,80" not in ass
+
+
+def test_later_group_windows_are_line_relative():
+    words = slice_words_for_clip(_transcript_with_words(), 4.0, 6.0)
+    ass = build_ass_for_clip(words, style="clean", words_per_group=2)
+    # Group starts at clip 4.10 -> line at 0.10; windows relative to the line.
+    assert "Dialogue: 0,0:00:00.10,0:00:01.30" in ass
+    assert "{\\t(0,50,\\1c" in ass
+    assert "\\t(410,460" not in ass
 
 
 def test_resolve_preset_unknown_raises():

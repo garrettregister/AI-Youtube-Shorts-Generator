@@ -16,6 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from shorts_generator.highlights import (  # noqa: E402
+    CHUNK_OVERLAP_SECONDS,
     LONG_VIDEO_THRESHOLD,
     chunk_transcript,
     get_highlights,
@@ -49,6 +50,16 @@ def test_chunks_are_rebased_to_local_origin():
         assert max_end <= chunk["duration"], (
             f"chunk {i}: segment end {max_end} > chunk duration {chunk['duration']}"
         )
+
+
+def test_chunk_size_is_configurable():
+    default_chunks = chunk_transcript(make_transcript())
+    small_chunks = chunk_transcript(make_transcript(), chunk_size_seconds=500)
+    # A smaller window splits the same video into more chunks.
+    assert len(small_chunks) > len(default_chunks)
+    # The first chunk's visible window is capped at chunk_size + overlap tail,
+    # not the full video window.
+    assert max(s["end"] for s in small_chunks[0]["segments"]) <= 500 + CHUNK_OVERLAP_SECONDS
 
 
 def _stub_llm(prompt: str) -> str:

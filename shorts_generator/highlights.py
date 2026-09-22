@@ -176,13 +176,13 @@ def build_transcript_text(transcript: Dict) -> str:
     return "\n".join(f"[{s['start']:.1f}s] {s['text'].strip()}" for s in segments)
 
 
-def chunk_transcript(transcript: Dict) -> List[Dict]:
+def chunk_transcript(transcript: Dict, chunk_size_seconds: int = CHUNK_SIZE_SECONDS) -> List[Dict]:
     segments = transcript.get("segments", [])
     duration = transcript.get("duration", segments[-1]["end"] if segments else 0)
     chunks = []
     start = 0
     while start < duration:
-        end = min(start + CHUNK_SIZE_SECONDS, duration)
+        end = min(start + chunk_size_seconds, duration)
         # Rebase chunk segments to a local origin so the transcript text the model
         # sees matches the `duration` used for sanitization. Without this, chunks
         # past the first expose absolute video timestamps (e.g. "[1500.2s]") which
@@ -200,7 +200,7 @@ def chunk_transcript(transcript: Dict) -> List[Dict]:
             chunk["duration"] = end + CHUNK_OVERLAP_SECONDS - start
             chunk["_offset"] = start
             chunks.append(chunk)
-        start += CHUNK_SIZE_SECONDS - CHUNK_OVERLAP_SECONDS
+        start += chunk_size_seconds - CHUNK_OVERLAP_SECONDS
     return chunks
 
 
